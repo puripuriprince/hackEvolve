@@ -105,6 +105,10 @@ class EvaluatorConfig:
     use_llm_feedback: bool = False
     llm_feedback_weight: float = 0.1
 
+    # Objective and metric configurations
+    objective_metric: str = "combined_score"  # Default objective metric
+    metric_configs: Dict[str, Any] = field(default_factory=dict) # Configs for each metric (e.g., weight, goal)
+
 
 @dataclass
 class Config:
@@ -215,6 +219,8 @@ class Config:
                 "distributed": self.evaluator.distributed,
                 "use_llm_feedback": self.evaluator.use_llm_feedback,
                 "llm_feedback_weight": self.evaluator.llm_feedback_weight,
+                "objective_metric": self.evaluator.objective_metric,
+                "metric_configs": self.evaluator.metric_configs,
             },
             # Evolution settings
             "diff_based_evolution": self.diff_based_evolution,

@@ -77,9 +77,9 @@ class Evaluator:
         self,
         program_code: str,
         program_id: str = "",
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         """
-        Evaluate a program and return scores
+        Evaluate a program and return scores and data
 
         Args:
             program_code: Code to evaluate
@@ -99,31 +99,42 @@ class Evaluator:
             # Run evaluation
             if self.config.cascade_evaluation:
                 # Run cascade evaluation
-                metrics = await self._cascade_evaluate(temp_file_path)
+                evaluation_result = await self._cascade_evaluate(temp_file_path)
             else:
                 # Run direct evaluation
-                metrics = await self._direct_evaluate(temp_file_path)
+                evaluation_result = await self._direct_evaluate(temp_file_path)
 
             # Add LLM feedback if configured
             if self.config.use_llm_feedback and self.llm_ensemble:
+                # Ensure evaluation_result has a 'metrics' key if we're adding to it.
+                if "metrics" not in evaluation_result:
+                    evaluation_result["metrics"] = {}
+
                 feedback_metrics = await self._llm_evaluate(program_code)
 
                 # Combine metrics
                 for name, value in feedback_metrics.items():
-                    metrics[f"llm_{name}"] = value * self.config.llm_feedback_weight
+                    evaluation_result["metrics"][f"llm_{name}"] = value * self.config.llm_feedback_weight
 
             elapsed = time.time() - start_time
             program_id_str = f" {program_id}" if program_id else ""
+
+            # Log based on the 'metrics' part of the result
+            metrics_to_log = evaluation_result.get("metrics", {})
             logger.info(
                 f"Evaluated program{program_id_str} in {elapsed:.2f}s: "
-                f"{', '.join(f'{name}={value:.4f}' for name, value in metrics.items())}"
+                f"{', '.join(f'{name}={value:.4f}' for name, value in metrics_to_log.items())}"
             )
 
-            return metrics
+            return evaluation_result # Return the full result
 
         except Exception as e:
             logger.error(f"Error evaluating program: {str(e)}")
-            return {"error": 0.0}
+            # Return structure consistent with successful evaluation
+            return {
+                "metrics": {"error": 1.0, "answer_rate": 0.0}, # Ensure core metrics expected by controller exist
+                "data": {"error_message": str(e)}
+            }
 
         finally:
             # Clean up temporary file
@@ -131,7 +142,7 @@ class Evaluator:
                 os.unlink(temp_file_path)
 
     @run_in_executor
-    def _direct_evaluate(self, program_path: str) -> Dict[str, float]:
+    def _direct_evaluate(self, program_path: str) -> Dict[str, Any]:
         """
         Directly evaluate a program using the evaluation function
 
@@ -145,18 +156,24 @@ class Evaluator:
             # Run the evaluation with timeout
             result = self.evaluate_function(program_path)
 
-            # Validate result
-            if not isinstance(result, dict):
-                logger.warning(f"Evaluation returned non-dictionary result: {result}")
-                return {"error": 0.0}
+            # Validate result (basic check, specific structure handled by consumer)
+            if not isinstance(result, dict) or "metrics" not in result or "data" not in result:
+                logger.warning(f"Evaluation function returned unexpected result structure: {result}")
+                return {
+                    "metrics": {"error": 1.0, "answer_rate": 0.0},
+                    "data": {"error_message": "Invalid evaluation function output"}
+                }
 
             return result
 
         except Exception as e:
             logger.error(f"Error in direct evaluation: {str(e)}")
-            return {"error": 0.0}
+            return {
+                "metrics": {"error": 1.0, "answer_rate": 0.0},
+                "data": {"error_message": str(e)}
+            }
 
-    async def _cascade_evaluate(self, program_path: str) -> Dict[str, float]:
+    async def _cascade_evaluate(self, program_path: str) -> Dict[str, Any]:
         """
         Run cascade evaluation with increasingly challenging test cases
 
@@ -170,6 +187,7 @@ class Evaluator:
         try:
             spec = importlib.util.spec_from_file_location("evaluation_module", self.evaluation_file)
             if spec is None or spec.loader is None:
+                # Fallback to direct evaluate which returns the new structure
                 return await self._direct_evaluate(program_path)
 
             module = importlib.util.module_from_spec(spec)
@@ -177,79 +195,100 @@ class Evaluator:
 
             # Check if cascade functions exist
             if not hasattr(module, "evaluate_stage1"):
+                # Fallback to direct evaluate which returns the new structure
                 return await self._direct_evaluate(program_path)
+
+            # Initialize cumulative results for cascade
+            cumulative_metrics: Dict[str, float] = {}
+            cumulative_data: Dict[str, Any] = {}
+            current_stage_error = None
 
             # Run first stage
             try:
-                stage1_result = await run_in_executor(module.evaluate_stage1)(program_path)
-                if not isinstance(stage1_result, dict):
-                    logger.warning(
-                        f"Stage 1 evaluation returned non-dictionary result: {stage1_result}"
-                    )
-                    return {"error": 0.0}
+                stage1_eval_result = await run_in_executor(module.evaluate_stage1)(program_path)
+                if not isinstance(stage1_eval_result, dict) or \
+                   "metrics" not in stage1_eval_result or "data" not in stage1_eval_result:
+                    logger.warning(f"Stage 1 evaluation returned non-dictionary/invalid result: {stage1_eval_result}")
+                    current_stage_error = "Stage 1 invalid output"
+                    # Use default error structure
+                    stage1_metrics = {"error": 1.0, "answer_rate": 0.0}
+                    stage1_data = {"error_message": current_stage_error}
+                else:
+                    stage1_metrics = stage1_eval_result.get("metrics", {})
+                    stage1_data = stage1_eval_result.get("data", {})
+
             except Exception as e:
                 logger.error(f"Error in stage 1 evaluation: {str(e)}")
-                return {"error": 0.0}
+                current_stage_error = str(e)
+                stage1_metrics = {"error": 1.0, "answer_rate": 0.0}
+                stage1_data = {"error_message": current_stage_error}
 
-            # Check threshold
-            if not self._passes_threshold(stage1_result, self.config.cascade_thresholds[0]):
-                return stage1_result
+            # Merge stage 1 results
+            cumulative_metrics.update(stage1_metrics)
+            cumulative_data.update(stage1_data) # Data from later stages might overwrite if keys conflict
+
+            # Check threshold or if error occurred
+            if current_stage_error or not self._passes_threshold(cumulative_metrics, self.config.cascade_thresholds[0]):
+                return {"metrics": cumulative_metrics, "data": cumulative_data}
 
             # Check if second stage exists
             if not hasattr(module, "evaluate_stage2"):
-                return stage1_result
+                return {"metrics": cumulative_metrics, "data": cumulative_data}
 
             # Run second stage
             try:
-                stage2_result = await run_in_executor(module.evaluate_stage2)(program_path)
-                if not isinstance(stage2_result, dict):
-                    logger.warning(
-                        f"Stage 2 evaluation returned non-dictionary result: {stage2_result}"
-                    )
-                    return stage1_result
+                stage2_eval_result = await run_in_executor(module.evaluate_stage2)(program_path)
+                if not isinstance(stage2_eval_result, dict) or \
+                   "metrics" not in stage2_eval_result or "data" not in stage2_eval_result:
+                    logger.warning(f"Stage 2 evaluation returned non-dictionary/invalid result: {stage2_eval_result}")
+                    current_stage_error = "Stage 2 invalid output"
+                    stage2_metrics = {"error": 1.0} # Keep existing metrics, add error
+                    stage2_data = {"error_message": current_stage_error}
+                else:
+                    stage2_metrics = stage2_eval_result.get("metrics", {})
+                    stage2_data = stage2_eval_result.get("data", {})
+
             except Exception as e:
                 logger.error(f"Error in stage 2 evaluation: {str(e)}")
-                return stage1_result
+                current_stage_error = str(e)
+                stage2_metrics = {"error": 1.0}
+                stage2_data = {"error_message": current_stage_error}
 
-            # Merge results
-            result = {}
-            # Convert all values to float to avoid type errors
-            for name, value in stage1_result.items():
-                if isinstance(value, (int, float)) and name != "error":
-                    result[name] = float(value)
+            cumulative_metrics.update(stage2_metrics)
+            cumulative_data.update(stage2_data)
 
-            for name, value in stage2_result.items():
-                if isinstance(value, (int, float)) and name != "error":
-                    result[name] = float(value)
-
-            # Check threshold
-            if len(self.config.cascade_thresholds) < 2 or not self._passes_threshold(
-                result, self.config.cascade_thresholds[1]
-            ):
-                return result
+            if current_stage_error or (len(self.config.cascade_thresholds) < 2 or not self._passes_threshold(
+                cumulative_metrics, self.config.cascade_thresholds[1]
+            )):
+                return {"metrics": cumulative_metrics, "data": cumulative_data}
 
             # Check if third stage exists
             if not hasattr(module, "evaluate_stage3"):
-                return result
+                return {"metrics": cumulative_metrics, "data": cumulative_data}
 
             # Run third stage
             try:
-                stage3_result = await run_in_executor(module.evaluate_stage3)(program_path)
-                if not isinstance(stage3_result, dict):
-                    logger.warning(
-                        f"Stage 3 evaluation returned non-dictionary result: {stage3_result}"
-                    )
-                    return result
+                stage3_eval_result = await run_in_executor(module.evaluate_stage3)(program_path)
+                if not isinstance(stage3_eval_result, dict) or \
+                   "metrics" not in stage3_eval_result or "data" not in stage3_eval_result:
+                    logger.warning(f"Stage 3 evaluation returned non-dictionary/invalid result: {stage3_eval_result}")
+                    current_stage_error = "Stage 3 invalid output"
+                    stage3_metrics = {"error": 1.0}
+                    stage3_data = {"error_message": current_stage_error}
+                else:
+                    stage3_metrics = stage3_eval_result.get("metrics", {})
+                    stage3_data = stage3_eval_result.get("data", {})
+
             except Exception as e:
                 logger.error(f"Error in stage 3 evaluation: {str(e)}")
-                return result
+                current_stage_error = str(e)
+                stage3_metrics = {"error": 1.0}
+                stage3_data = {"error_message": current_stage_error}
 
-            # Merge results
-            for name, value in stage3_result.items():
-                if isinstance(value, (int, float)) and name != "error":
-                    result[name] = float(value)
+            cumulative_metrics.update(stage3_metrics)
+            cumulative_data.update(stage3_data)
 
-            return result
+            return {"metrics": cumulative_metrics, "data": cumulative_data}
 
         except Exception as e:
             logger.error(f"Error in cascade evaluation: {str(e)}")
@@ -275,14 +314,14 @@ class Evaluator:
             1. Readability: How easy is the code to read and understand?
             2. Maintainability: How easy would the code be to maintain and modify?
             3. Efficiency: How efficient is the code in terms of time and space complexity?
-            
+
             For each metric, provide a score between 0.0 and 1.0, where 1.0 is best.
-            
+
             Code to evaluate:
             ```python
             {program_code}
             ```
-            
+
             Return your evaluation as a JSON object with the following format:
             {{
                 "readability": [score],
