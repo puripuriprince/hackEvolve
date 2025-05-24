@@ -14,7 +14,7 @@ from openevolve.llm import OpenAILLM as OpenAIProvider
 from examples.prompt_hacking.metrics import compute_composite_fitness, compute_fitness
 
 # Constants for Claude API
-CLAUDE_API_KEY = "your key here"
+CLAUDE_API_KEY = "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"
 API_URL = "https://api.anthropic.com/v1/messages"
 
 # Standard refusal messages to compare against
