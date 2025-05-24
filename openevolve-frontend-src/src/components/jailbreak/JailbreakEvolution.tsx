@@ -74,6 +74,24 @@ const CustomDot = ({
   );
 };
 
+// Custom tooltip component
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    return (
+      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3">
+        <p className="font-bold text-sm mb-1">
+          Generation {data.generation}, Point {data.pointIndex}
+        </p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Unsafe %: {data.unsafePercentage.toFixed(2)}%
+        </p>
+      </div>
+    );
+  }
+  return null;
+};
+
 export const JailbreakEvolution: React.FC = () => {
   const [data, setData] = useState<JailbreakPoint[]>([]);
   const [currentGeneration, setCurrentGeneration] = useState(0);
@@ -81,27 +99,19 @@ export const JailbreakEvolution: React.FC = () => {
   const [selectedPoint, setSelectedPoint] = useState<JailbreakPoint | null>(null);
   const [topPerformers, setTopPerformers] = useState<Set<string>>(new Set());
   
-  // Function to find top performer in each 10-generation interval
+  // Function to find top performer only at generation intervals of 10 (10, 20, 30, etc.)
   const updateTopPerformers = useCallback((points: JailbreakPoint[]) => {
     const newTopPerformers = new Set<string>();
     
-    // Group points by 10-generation intervals
-    const intervals: { [key: number]: JailbreakPoint[] } = {};
+    // Only consider generations that are multiples of 10
+    const intervalGenerations = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
     
-    points.forEach(point => {
-      const interval = Math.floor(point.generation / 10) * 10;
-      if (!intervals[interval]) {
-        intervals[interval] = [];
-      }
-      intervals[interval].push(point);
-    });
-    
-    // Find top performer in each interval
-    Object.values(intervals).forEach(intervalPoints => {
-      if (intervalPoints.length > 0) {
-        const topPoint = intervalPoints.reduce((max, point) => 
+    intervalGenerations.forEach(generation => {
+      const generationPoints = points.filter(point => point.generation === generation);
+      if (generationPoints.length > 0) {
+        const topPoint = generationPoints.reduce((max, point) => 
           point.unsafePercentage > max.unsafePercentage ? point : max, 
-          intervalPoints[0]
+          generationPoints[0]
         );
         newTopPerformers.add(topPoint.id);
       }
@@ -179,10 +189,7 @@ export const JailbreakEvolution: React.FC = () => {
                   label={{ value: 'Unsafe Percentage', angle: -90, position: 'insideLeft' }}
                   unit="%"
                 />
-                <Tooltip 
-                  formatter={(value: any) => [`${value.toFixed(2)}%`, 'Unsafe']}
-                  labelFormatter={(label: any) => `Generation ${label}`}
-                />
+                <Tooltip content={<CustomTooltip />} />
                 
                 {/* Reference lines every 10 generations */}
                 {Array.from({ length: 10 }).map((_, i) => (
