@@ -122,18 +122,35 @@ def evaluate(program_path, previous_prompts=None):
             "num_danger": danger,
             "answer_rate": float(not refused)
         }
-        return metrics
+        return {
+            "metrics": metrics,
+            "data": {
+                "prompt": prompt,
+                "response": response,
+                "label": label
+            }
+        }
     except Exception as e:
         print(f"Evaluation failed: {e}")
         traceback.print_exc()
-        return {
-            "total_prompts": 1,
+        # Still try to return the structured data, possibly with error info
+        error_metrics = {
+            "total_prompts": 1, # Or 0, depending on how you count failed attempts
             "num_refused": 0,
             "num_partial": 0,
             "num_novelty": 0,
             "num_danger": 0,
             "answer_rate": 0.0,
-            "error": str(e)
+            "error": 1.0 # Indicate an error occurred
+        }
+        return {
+            "metrics": error_metrics,
+            "data": {
+                "prompt": None, # Or some placeholder
+                "response": None, # Or some placeholder
+                "label": None,
+                "error_message": str(e)
+            }
         }
 
 if __name__ == "__main__":

@@ -154,7 +154,7 @@ class OpenEvolve:
             initial_program_id = str(uuid.uuid4())
 
             # Evaluate the initial program
-            initial_metrics = await self.evaluator.evaluate_program(
+            initial_evaluation_result = await self.evaluator.evaluate_program(
                 self.initial_program_code, initial_program_id
             )
 
@@ -162,9 +162,24 @@ class OpenEvolve:
                 id=initial_program_id,
                 code=self.initial_program_code,
                 language=self.language,
-                metrics=initial_metrics,
+                metrics=initial_evaluation_result.get("metrics", {}),
                 iteration_found=start_iteration,
             )
+            # Populate metadata for initial_program
+            initial_program_data = initial_evaluation_result.get("data", {})
+            initial_program.metadata["prompt"] = initial_program_data.get("prompt")
+            initial_program.metadata["response"] = initial_program_data.get("response")
+            initial_program.metadata["label"] = initial_program_data.get("label")
+            if "error_message" in initial_program_data:
+                initial_program.metadata["error_message"] = initial_program_data.get("error_message")
+
+            # Handle cases where metrics might be missing for initial_program
+            if not initial_program.metrics or self.config.evaluator.objective_metric not in initial_program.metrics:
+                logger.warning(f"Initial program {initial_program.id} evaluation resulted in missing metrics: {initial_program.metrics}. Assigning default low score.")
+                if "error" not in initial_program.metrics and "error_message" in initial_program_data:
+                    initial_program.metrics["error"] = 1.0
+                initial_program.metrics.setdefault(self.config.evaluator.objective_metric, self.config.evaluator.metric_configs.get(self.config.evaluator.objective_metric, {}).get("worst_value", 0.0))
+                initial_program.metrics.setdefault("answer_rate", 0.0) # common metric
 
             self.database.add(initial_program)
         else:
@@ -252,6 +267,42 @@ class OpenEvolve:
                     },
                 )
 
+                # Evaluate the child program
+                try:
+                    evaluation_result = await self.evaluator.evaluate_program(
+                        child_program.code, program_id=child_program.id
+                    )
+                    child_program.metrics = evaluation_result.get("metrics", {})
+                    program_data = evaluation_result.get("data", {})
+                    child_program.metadata["prompt"] = program_data.get("prompt")
+                    child_program.metadata["response"] = program_data.get("response")
+                    child_program.metadata["label"] = program_data.get("label")
+                    if "error_message" in program_data:
+                        child_program.metadata["error_message"] = program_data.get("error_message")
+
+                    # Handle cases where metrics might be missing if an error occurred during evaluation
+                    # Ensure essential metrics for comparison exist, e.g., 'answer_rate'
+                    if not child_program.metrics or self.config.evaluator.objective_metric not in child_program.metrics:
+                        logger.warning(f"Program {child_program.id} evaluation resulted in missing metrics: {child_program.metrics}. Assigning default low score.")
+                        # Ensure 'error' metric is set if it came from evaluator's exception handling
+                        if "error" not in child_program.metrics and "error_message" in program_data:
+                            child_program.metrics["error"] = 1.0
+                        # Provide default for objective if missing, to allow sorting/comparison
+                        child_program.metrics.setdefault(self.config.evaluator.objective_metric, self.config.evaluator.metric_configs.get(self.config.evaluator.objective_metric, {}).get("worst_value", 0.0))
+                        child_program.metrics.setdefault("answer_rate", 0.0) # common metric often used
+
+                except Exception as e:
+                    logger.error(f"Critical error during evaluation of {child_program.id}: {e}")
+                    child_program.metrics = {
+                        "error": 1.0,
+                        self.config.evaluator.objective_metric: self.config.evaluator.metric_configs.get(self.config.evaluator.objective_metric, {}).get("worst_value", 0.0),
+                        "answer_rate": 0.0
+                    }
+                    child_program.metadata["prompt"] = None
+                    child_program.metadata["response"] = None
+                    child_program.metadata["label"] = None
+                    child_program.metadata["error_message"] = str(e)
+
                 # Add to database
                 self.database.add(child_program, iteration=i + 1)
 
@@ -271,6 +322,9 @@ class OpenEvolve:
                 # Save checkpoint
                 if (i + 1) % self.config.checkpoint_interval == 0:
                     self._save_checkpoint(i + 1)
+
+                # Save per-iteration report
+                self._save_per_iteration_report(i + 1)
 
                 # Check if target score reached
                 if target_score is not None:
@@ -397,17 +451,20 @@ class OpenEvolve:
             with open(best_program_info_path, "w") as f:
                 import json
 
+                data_to_save = {
+                    "id": best_program.id,
+                    "generation": best_program.generation,
+                    "iteration": best_program.iteration_found,
+                    "current_iteration": iteration,
+                    "metrics": best_program.metrics,
+                    "language": best_program.language,
+                    "timestamp": best_program.timestamp,
+                    "saved_at": time.time(),
+                    "prompt": best_program.metadata.get("prompt"),
+                    "response": best_program.metadata.get("response"),
+                }
                 json.dump(
-                    {
-                        "id": best_program.id,
-                        "generation": best_program.generation,
-                        "iteration": best_program.iteration_found,
-                        "current_iteration": iteration,
-                        "metrics": best_program.metrics,
-                        "language": best_program.language,
-                        "timestamp": best_program.timestamp,
-                        "saved_at": time.time(),
-                    },
+                    data_to_save,
                     f,
                     indent=2,
                 )
@@ -418,6 +475,49 @@ class OpenEvolve:
             )
 
         logger.info(f"Saved checkpoint at iteration {iteration} to {checkpoint_path}")
+
+    def _save_per_iteration_report(self, iteration: int) -> None:
+        """Saves the best program info for the given iteration."""
+        program_to_save = None
+        if self.database.best_program_id:
+            program_to_save = self.database.get(self.database.best_program_id)
+
+        if not program_to_save: # Fallback or if best_program_id isn't definitive yet
+            program_to_save = self.database.get_best_program()
+
+        if not program_to_save:
+            logger.info(f"Iteration {iteration}: No best program available to save in per-iteration report.")
+            return
+
+        report_dir = os.path.join(self.output_dir, "iteration_reports", f"iteration_{iteration}")
+        os.makedirs(report_dir, exist_ok=True)
+
+        info_path = os.path.join(report_dir, "best_program_info.json")
+
+        with open(info_path, "w") as f:
+            import json
+            import time
+
+            data_to_save = {
+                "id": program_to_save.id,
+                "generation": program_to_save.generation,
+                "parent_id": program_to_save.parent_id,
+                "iteration_found": program_to_save.iteration_found,
+                "report_for_iteration": iteration,
+                "program_timestamp": program_to_save.timestamp,
+                "report_timestamp": time.time(),
+                "language": program_to_save.language,
+                "metrics": program_to_save.metrics,
+                "prompt": program_to_save.metadata.get("prompt"),
+                "response": program_to_save.metadata.get("response"),
+                "label": program_to_save.metadata.get("label"),
+            }
+            if "error_message" in program_to_save.metadata:
+                 data_to_save["error_message"] = program_to_save.metadata.get("error_message")
+
+            json.dump(data_to_save, f, indent=2)
+
+        logger.info(f"Saved per-iteration report for iteration {iteration} to {info_path}")
 
     def _save_best_program(self, program: Optional[Program] = None) -> None:
         """
@@ -453,17 +553,20 @@ class OpenEvolve:
         with open(info_path, "w") as f:
             import json
 
+            data_to_save = {
+                "id": program.id,
+                "generation": program.generation,
+                "iteration": program.iteration_found,
+                "timestamp": program.timestamp,
+                "parent_id": program.parent_id,
+                "metrics": program.metrics,
+                "language": program.language,
+                "saved_at": time.time(),
+                "prompt": program.metadata.get("prompt"),
+                "response": program.metadata.get("response"),
+            }
             json.dump(
-                {
-                    "id": program.id,
-                    "generation": program.generation,
-                    "iteration": program.iteration_found,
-                    "timestamp": program.timestamp,
-                    "parent_id": program.parent_id,
-                    "metrics": program.metrics,
-                    "language": program.language,
-                    "saved_at": time.time(),
-                },
+                data_to_save,
                 f,
                 indent=2,
             )
