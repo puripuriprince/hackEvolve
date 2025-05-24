@@ -221,13 +221,15 @@ export const JailbreakEvolution: React.FC = () => {
           </div>
           
           <div className="mt-4 flex items-center justify-between text-sm">
-            <div className="flex items-center gap-2">
-              <span className="inline-block w-3 h-3 rounded-full bg-orange-500"></span>
-              <span>Top performers</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="inline-block w-3 h-3 rounded-full bg-amber-800"></span>
-              <span>Other attempts</span>
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-3 h-3 rounded-full bg-orange-500"></span>
+                <span>Top performers</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-3 h-3 rounded-full bg-amber-800"></span>
+                <span>Other attempts</span>
+              </div>
             </div>
             <div>
               <span className="font-medium">Current Generation: {currentGeneration}/100</span>
