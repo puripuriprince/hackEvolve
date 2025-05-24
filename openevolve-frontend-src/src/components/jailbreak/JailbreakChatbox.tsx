@@ -1,7 +1,6 @@
 import React from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "../ui/dialog";
-import { AlertTriangle, X } from 'lucide-react';
-import { Button } from "../ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { AlertTriangle } from 'lucide-react';
 
 interface JailbreakPoint {
   generation: number;
@@ -25,15 +24,10 @@ export const JailbreakChatbox: React.FC<JailbreakChatboxProps> = ({ point, onClo
   return (
     <Dialog open={!!point} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
-        <DialogHeader className="flex flex-row items-center justify-between">
+        <DialogHeader>
           <DialogTitle className="text-xl">
             Generation {point.generation}, Point {point.pointIndex}
           </DialogTitle>
-          <DialogClose asChild>
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X className="h-4 w-4" />
-            </Button>
-          </DialogClose>
         </DialogHeader>
         
         <div className="overflow-y-auto flex-1 pr-2">
