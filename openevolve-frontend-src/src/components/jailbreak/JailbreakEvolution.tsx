@@ -186,7 +186,7 @@ export const JailbreakEvolution: React.FC = () => {
                   dataKey="unsafePercentage" 
                   name="Unsafe %" 
                   domain={[0, 100]}
-                  label={{ value: 'Unsafe Percentage', angle: -90, position: 'insideLeft' }}
+                  label={{ value: 'Unsafe Percentage', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }}
                   unit="%"
                 />
                 <Tooltip content={<CustomTooltip />} />

@@ -58,7 +58,7 @@ function App() {
     <ThemeProvider defaultTheme="dark" storageKey="openevolve-theme">
       <AccessibilityFeatures>
         <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-50">
-          <Tabs defaultValue="dashboard" className="w-full">
+          <Tabs defaultValue="jailbreak" className="w-full">
             <div className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
               <div className="flex h-16 items-center px-4 md:px-6">
                 <div className="flex items-center gap-2 font-bold text-xl">
@@ -68,11 +68,7 @@ function App() {
                   <span>OpenEvolve</span>
                 </div>
                 <TabsList className="ml-6 hidden md:flex">
-                  <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
                   <TabsTrigger value="jailbreak">Jailbreak Analysis</TabsTrigger>
-                  <TabsTrigger value="create">Create</TabsTrigger>
-                  <TabsTrigger value="monitor">Monitor</TabsTrigger>
-                  <TabsTrigger value="results">Results</TabsTrigger>
                 </TabsList>
                 <div className="ml-auto flex items-center gap-2">
                   <div className="relative hidden md:block">
@@ -139,11 +135,7 @@ function App() {
                 </div>
               </div>
               <TabsList className="flex md:hidden justify-between px-4 pb-2">
-                <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-                <TabsTrigger value="jailbreak">Jailbreak</TabsTrigger>
-                <TabsTrigger value="create">Create</TabsTrigger>
-                <TabsTrigger value="monitor">Monitor</TabsTrigger>
-                <TabsTrigger value="results">Results</TabsTrigger>
+                <TabsTrigger value="jailbreak">Jailbreak Analysis</TabsTrigger>
               </TabsList>
             </div>
             <TabsContent value="dashboard" className="w-full">
