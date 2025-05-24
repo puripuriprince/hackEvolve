@@ -8,14 +8,13 @@ import time
 import json
 from typing import Dict, Any, List, Optional
 import requests
-import os
 
 from openevolve.llm import LLMInterface as LLMProvider
 from openevolve.llm import OpenAILLM as OpenAIProvider
 from examples.prompt_hacking.metrics import compute_composite_fitness, compute_fitness
 
 # Constants for Claude API
-CLAUDE_API_KEY = "your key here"
+CLAUDE_API_KEY = "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"
 API_URL = "https://api.anthropic.com/v1/messages"
 
 # Standard refusal messages to compare against
@@ -48,8 +47,6 @@ class FitnessEvaluator:
         self.metric_weights = metric_weights
         self.claude_model = claude_model
         self.evaluation_history: List[Dict[str, Any]] = []
-        self.population_metrics: Dict[int, List[Dict[str, float]]] = {}
-        self.best_programs: Dict[int, Dict[str, Any]] = {}
 
     def get_claude_response(self, prompt: str) -> str:
         """Get response from Claude API."""
@@ -91,12 +88,11 @@ class FitnessEvaluator:
             "response_length": len(response)
         }
 
-    def evaluate_prompt(self, prompt: str, iteration: int, detailed: bool = True) -> Dict[str, Any]:
+    def evaluate_prompt(self, prompt: str, detailed: bool = True) -> Dict[str, Any]:
         """Evaluate a single adversarial prompt using Claude.
 
         Args:
             prompt: The adversarial prompt to test
-            iteration: Current iteration number
             detailed: Whether to return detailed metrics or just fitness score
 
         Returns:
@@ -131,24 +127,9 @@ class FitnessEvaluator:
             evaluation_time = time.time() - start_time
             print(f"Step 3: Evaluation completed in {evaluation_time:.2f}s")
 
-            # Store metrics for population tracking
-            if iteration not in self.population_metrics:
-                self.population_metrics[iteration] = []
-            self.population_metrics[iteration].append(metrics)
-
-            # Check if this is the best program for this iteration
-            if iteration not in self.best_programs or fitness_score > self.best_programs[iteration]["fitness_score"]:
-                self.best_programs[iteration] = {
-                    "prompt": prompt,
-                    "response": response,
-                    "fitness_score": fitness_score,
-                    "metrics": metrics,
-                    "evaluation_time": evaluation_time,
-                    "timestamp": time.time(),
-                    "claude_model": self.claude_model
-                }
-
             result = {
+                "prompt": prompt,
+                "response": response,
                 "fitness_score": fitness_score,
                 "metrics": metrics,
                 "evaluation_time": evaluation_time,
@@ -164,6 +145,8 @@ class FitnessEvaluator:
         except Exception as e:
             print(f"Error during evaluation: {e}")
             error_result = {
+                "prompt": prompt,
+                "response": "",
                 "fitness_score": -2.0,  # Heavy penalty for failed evaluation
                 "metrics": {"error": str(e)},
                 "evaluation_time": time.time() - start_time,
@@ -173,28 +156,16 @@ class FitnessEvaluator:
             self.evaluation_history.append(error_result)
             return error_result
 
-    def evaluate_batch(self, prompts: List[str], iteration: int) -> List[Dict[str, Any]]:
+    def evaluate_batch(self, prompts: List[str]) -> List[Dict[str, Any]]:
         """Evaluate multiple prompts in batch."""
         print(f"Starting batch evaluation of {len(prompts)} prompts...")
         results = []
         for i, prompt in enumerate(prompts, 1):
             print(f"\nEvaluating prompt {i}/{len(prompts)}")
-            result = self.evaluate_prompt(prompt, iteration)
+            result = self.evaluate_prompt(prompt)
             results.append(result)
         print(f"\nBatch evaluation completed. {len(results)} results generated.")
         return results
-
-    def save_population_metrics(self, output_dir: str):
-        """Save population metrics and best programs to JSON files."""
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Save population metrics
-        with open(os.path.join(output_dir, "population_metrics.json"), "w") as f:
-            json.dump(self.population_metrics, f, indent=2)
-        
-        # Save best programs
-        with open(os.path.join(output_dir, "best_programs.json"), "w") as f:
-            json.dump(self.best_programs, f, indent=2)
 
     def get_best_prompt(self) -> Optional[Dict[str, Any]]:
         """Get the prompt with highest fitness score from history."""
@@ -245,7 +216,7 @@ def evaluate(program_path, previous_prompts=None):
         program_content = f.read()
     
     # Evaluate the program
-    result = evaluator.evaluate_prompt(program_content, iteration=0)
+    result = evaluator.evaluate_prompt(program_content)
     
     # Convert metrics to simple key-value pairs
     metrics = {
