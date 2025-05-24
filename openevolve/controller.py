@@ -153,6 +153,7 @@ class OpenEvolve:
             logger.info("Adding initial program to database")
             initial_program_id = str(uuid.uuid4())
 
+            # Evaluate the initial program
             initial_evaluation_result = await self.evaluator.evaluate_program(
                 self.initial_program_code, initial_program_id
             )
@@ -172,13 +173,13 @@ class OpenEvolve:
             if "error_message" in initial_program_data:
                 initial_program.metadata["error_message"] = initial_program_data.get("error_message")
 
-            # Handle cases where metrics might be missing
+            # Handle cases where metrics might be missing for initial_program
             if not initial_program.metrics or self.config.evaluator.objective_metric not in initial_program.metrics:
                 logger.warning(f"Initial program {initial_program.id} evaluation resulted in missing metrics: {initial_program.metrics}. Assigning default low score.")
                 if "error" not in initial_program.metrics and "error_message" in initial_program_data:
                     initial_program.metrics["error"] = 1.0
                 initial_program.metrics.setdefault(self.config.evaluator.objective_metric, self.config.evaluator.metric_configs.get(self.config.evaluator.objective_metric, {}).get("worst_value", 0.0))
-                initial_program.metrics.setdefault("answer_rate", 0.0)
+                initial_program.metrics.setdefault("answer_rate", 0.0) # common metric
 
             self.database.add(initial_program)
         else:
@@ -461,7 +462,6 @@ class OpenEvolve:
                     "saved_at": time.time(),
                     "prompt": best_program.metadata.get("prompt"),
                     "response": best_program.metadata.get("response"),
-                    "label": best_program.metadata.get("label"),
                 }
                 json.dump(
                     data_to_save,
@@ -482,7 +482,7 @@ class OpenEvolve:
         if self.database.best_program_id:
             program_to_save = self.database.get(self.database.best_program_id)
 
-        if not program_to_save: # Fallback
+        if not program_to_save: # Fallback or if best_program_id isn't definitive yet
             program_to_save = self.database.get_best_program()
 
         if not program_to_save:
@@ -507,7 +507,7 @@ class OpenEvolve:
                 "program_timestamp": program_to_save.timestamp,
                 "report_timestamp": time.time(),
                 "language": program_to_save.language,
-                "metrics": program_to_save.metrics, # This includes all numerical scores
+                "metrics": program_to_save.metrics,
                 "prompt": program_to_save.metadata.get("prompt"),
                 "response": program_to_save.metadata.get("response"),
                 "label": program_to_save.metadata.get("label"),
@@ -564,7 +564,6 @@ class OpenEvolve:
                 "saved_at": time.time(),
                 "prompt": program.metadata.get("prompt"),
                 "response": program.metadata.get("response"),
-                "label": program.metadata.get("label"),
             }
             json.dump(
                 data_to_save,

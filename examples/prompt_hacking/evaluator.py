@@ -8,11 +8,10 @@ import time
 import json
 from typing import Dict, Any, List, Optional
 import requests
-import traceback
 
 from openevolve.llm import LLMInterface as LLMProvider
 from openevolve.llm import OpenAILLM as OpenAIProvider
-from examples.prompt_hacking.metrics import compute_composite_fitness, compute_fitness, compute_novelty, compute_danger_score
+from examples.prompt_hacking.metrics import compute_composite_fitness, compute_fitness
 
 # Constants for Claude API
 CLAUDE_API_KEY = "your key here"
@@ -205,60 +204,26 @@ def evaluate(program_path, previous_prompts=None):
     """
     Top-level evaluation function required by OpenEvolve.
     """
-    try:
-        # ... (dynamically import program, run program.run_prompt()) ...
-        prompt, response, label = program.run_prompt() # Assuming this is how you get them
+    # Create a dummy provider since we're using Claude directly
+    class DummyProvider:
+        def __init__(self):
+            self.model_name = "claude-3-5-haiku"
 
-        # ... (calculate your metrics like refused, partial, novelty, danger) ...
-        refused = is_refusal(response)
-        partial = is_partial_answer(response)
-        # Ensure novelty and danger calculations are robust
-        novelty = compute_novelty(prompt, previous_prompts if previous_prompts is not None else [])
-        danger = compute_danger_score(response)
+    evaluator = FitnessEvaluator(provider=DummyProvider())
 
-        # This is where you would calculate or include your main fitness score,
-        # potentially using your teammate's fitness module.
-        # For example, if your objective_metric is "combined_score":
-        # combined_score = calculate_my_fitness(prompt, response, other_metrics_like_danger_novelty)
-        # Ensure this `combined_score` (or whatever your objective_metric is) is part of the metrics dict.
+    # Load and run the program
+    with open(program_path, 'r') as f:
+        program_content = f.read()
 
-        metrics = {
-            "total_prompts": 1,
-            "num_refused": int(refused),
-            "num_partial": int(partial),
-            "num_novelty": novelty,
-            "num_danger": danger,
-            "answer_rate": float(not refused),
-            # "combined_score": combined_score, # Add your objective metric here
-            # ... any other numerical metrics ...
-        }
+    # Evaluate the program
+    result = evaluator.evaluate_prompt(program_content)
 
-        # If you have a fitness module, you might import and call it here
-        # import sys
-        # sys.path.append('../..') # Or adjust path to your fitness module
-        # from fitness import your_fitness_scorer
-        # fitness_scores = your_fitness_scorer.calculate_fitness(prompt, response, metrics)
-        # metrics.update(fitness_scores) # if it returns a dict of scores
+    # Convert metrics to simple key-value pairs
+    metrics = {
+        "fitness": float(result["fitness_score"]),  # Ensure it's a float
+        "is_safe": float(result["metrics"]["is_safe"]),  # Convert bool to float
+        "refusal_similarity": float(result["metrics"]["refusal_similarity"]),
+        "response_length": float(result["metrics"]["response_length"])
+    }
 
-        return {
-            "metrics": metrics,
-            "data": {
-                "prompt": prompt,
-                "response": response,
-                "label": label # or any other non-numeric data
-            }
-        }
-    except Exception as e:
-        print(f"Evaluation failed: {e}")
-        traceback.print_exc()
-        error_metrics = {
-            "total_prompts": 1, "num_refused": 0, "num_partial": 0,
-            "num_novelty": 0, "num_danger": 0, "answer_rate": 0.0, "error": 1.0
-        }
-        return {
-            "metrics": error_metrics,
-            "data": {
-                "prompt": None, "response": None, "label": None,
-                "error_message": str(e)
-            }
-        }
+    return metrics
